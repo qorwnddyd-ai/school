@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>학교 급식 알리미</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #f0f2f5;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+    .card {
+      background-color: #ffffff;
+      border-radius: 1.25rem;
+      padding: 1.5rem;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+      margin-bottom: 1.5rem;
+    }
+    .button {
+      background-color: #007AFF;
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border-radius: 0.75rem;
+      font-weight: 600;
+    }
+    .button:hover {
+      background-color: #005bb5;
+    }
+    .input-field {
+      border: 1px solid #e0e0e0;
+      border-radius: 0.75rem;
+      padding: 0.75rem 1rem;
+      font-size: 1rem;
+      width: 100%;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+  <div class="container flex-grow">
+    <h1 class="text-4xl font-extrabold text-center text-gray-800 my-8">학교 급식 알리미</h1>
+
+    <!-- 오늘의 급식 -->
+    <section class="card">
+      <h2 class="text-2xl font-bold text-gray-700 mb-4 text-center">오늘의 급식</h2>
+      <div class="text-center text-lg font-semibold text-blue-600 mb-4" id="schoolNameDisplay"></div>
+
+      <div class="flex items-center justify-center mb-6">
+        <input type="date" id="mealDatePicker" class="input-field w-auto text-center cursor-pointer" />
+      </div>
+
+      <div id="loadingIndicator" class="text-center py-4 hidden">
+        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+        <p class="text-gray-600 mt-2">급식 정보를 불러오는 중...</p>
+      </div>
+
+      <div id="mealContent" class="text-gray-800 text-base leading-relaxed whitespace-pre-line"></div>
+      <div id="mealDetails" class="text-sm text-gray-600 mt-4"></div>
+      <p id="noMealMessage" class="text-center text-gray-500 mt-4 hidden">선택된 날짜의 급식 정보가 없습니다.</p>
+    </section>
+
+    <!-- 댓글 -->
+    <section class="card mt-6">
+      <h2 class="text-xl font-bold text-gray-700 mb-2">급식에 대한 의견 남기기</h2>
+      <div class="mb-2">
+        <label for="rating" class="block mb-1">평점 (1~5):</label>
+        <select id="rating" class="input-field w-auto">
+          <option value="5">5점</option>
+          <option value="4">4점</option>
+          <option value="3">3점</option>
+          <option value="2">2점</option>
+          <option value="1">1점</option>
+        </select>
+      </div>
+      <div class="mb-2">
+        <label for="comment" class="block mb-1">댓글:</label>
+        <textarea id="comment" class="input-field" rows="2" placeholder="급식에 대한 의견을 남겨주세요"></textarea>
+      </div>
+      <button id="submitBtn" class="button w-full">등록</button>
+      <div id="commentList" class="mt-4"></div>
+    </section>
+  </div>
+
+  <script>
+    const NEIS_API_KEY = 'd0b2a13388644740af5c126eed46e421';
+    const USER_EDUCATION_OFFICE_CODE = 'K10';
+    const USER_SCHOOL_CODE = '7801164';
+    const USER_SCHOOL_NAME = '원주고등학교';
+    const NEIS_BASE_URL = 'https://open.neis.go.kr/hub';
+
+    const schoolNameDisplay = document.getElementById('schoolNameDisplay');
+    const mealDatePicker = document.getElementById('mealDatePicker');
+    const loadingIndicator = document.getElementById('loadingIndicator');
+    const mealContent = document.getElementById('mealContent');
+    const mealDetails = document.getElementById('mealDetails');
+    const noMealMessage = document.getElementById('noMealMessage');
+    const submitBtn = document.getElementById('submitBtn');
+    const ratingInput = document.getElementById('rating');
+    const commentInput = document.getElementById('comment');
+    const commentList = document.getElementById('commentList');
+
+    const fetchNeisData = async (endpoint, params = {}) => {
+      const queryString = new URLSearchParams({
+        KEY: NEIS_API_KEY,
+        Type: 'json',
+        pIndex: 1,
+        pSize: 100,
+        ...params,
+      }).toString();
+
+      const url = `${NEIS_BASE_URL}/${endpoint}?${queryString}`;
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+        if (data.RESULT && data.RESULT.CODE !== 'INFO-000') {
+          alert('API 오류: ' + data.RESULT.MESSAGE);
+          return null;
+        }
+        if (data[endpoint] && data[endpoint][1] && data[endpoint][1].row) {
+          return data[endpoint][1].row;
+        }
+        return [];
+      } catch (error) {
+        alert('네트워크 오류: 데이터를 가져오는 데 실패했습니다.');
+        return null;
+      }
+    };
+
+    const getMealInfo = async (mealYmd) => {
+      return fetchNeisData('mealServiceDietInfo', {
+        ATPT_OFCDC_SC_CODE: USER_EDUCATION_OFFICE_CODE,
+        SD_SCHUL_CODE: USER_SCHOOL_CODE,
+        MLSV_YMD: mealYmd,
+      });
+    };
+
+    const displayMeal = (meal) => {
+      if (meal && meal.DDISH_NM) {
+        mealContent.innerHTML = meal.DDISH_NM.replace(/<br\/>/g, '<br>').replace(/\./g, '');
+        mealDetails.innerHTML = `
+          ${meal.CAL_INFO ? `<p><strong>칼로리:</strong> ${meal.CAL_INFO}</p>` : ''}
+          ${meal.NTR_INFO ? `<p><strong>영양정보:</strong> ${meal.NTR_INFO}</p>` : ''}
+          ${meal.ORPLC_INFO ? `<p><strong>원산지:</strong> ${meal.ORPLC_INFO}</p>` : ''}
+          ${meal.ALLERGY_INFO ? `<p><strong>알레르기:</strong> ${meal.ALLERGY_INFO.replace(/\./g, '')}</p>` : ''}
+        `;
+        mealContent.classList.remove('hidden');
+        mealDetails.classList.remove('hidden');
+        noMealMessage.classList.add('hidden');
+      } else {
+        mealContent.classList.add('hidden');
+        mealDetails.classList.add('hidden');
+        noMealMessage.classList.remove('hidden');
+      }
+    };
+
+    const fetchAndDisplayMeal = async (date) => {
+      loadingIndicator.classList.remove('hidden');
+      mealContent.classList.add('hidden');
+      mealDetails.classList.add('hidden');
+      noMealMessage.classList.add('hidden');
+
+      const yyyymmdd = date.toISOString().slice(0, 10).replace(/-/g, '');
+      const data = await getMealInfo(yyyymmdd);
+
+      loadingIndicator.classList.add('hidden');
+      displayMeal(data && data.length > 0 ? data[0] : null);
+    };
+
+    mealDatePicker.addEventListener('change', (event) => {
+      const selectedDate = new Date(event.target.value);
+      if (!isNaN(selectedDate)) {
+        fetchAndDisplayMeal(selectedDate);
+        displayComments();  // 날짜 바뀔 때 댓글도 새로고침
+      }
+    });
+
+    submitBtn.addEventListener('click', async () => {
+      const rating = ratingInput.value;
+      const comment = commentInput.value.trim();
+      const mealDate = mealDatePicker.value;
+
+      if (!comment) {
+        alert('댓글을 입력해주세요.');
+        return;
+      }
+
+      await saveComment(rating, comment, mealDate);
+      commentInput.value = '';
+      await displayComments();
+    });
+
+    async function displayComments() {
+      const comments = await loadComments();
+      commentList.innerHTML = comments.map(c =>
+        `<div class="border-b py-2"><span class="font-bold text-yellow-500">★${c.rating}</span> ${c.comment}</div>`
+      ).join('');
+    }
+
+    const initializeApp = () => {
+      schoolNameDisplay.textContent = USER_SCHOOL_NAME + ' 급식';
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = (today.getMonth() + 1).toString().padStart(2, '0');
+      const dd = today.getDate().toString().padStart(2, '0');
+      const todayString = `${yyyy}-${mm}-${dd}`;
+      mealDatePicker.value = todayString;
+      fetchAndDisplayMeal(today);
+      displayComments();
+    };
+
+    // Supabase 연결
+    const SUPABASE_URL = "https://dcwbagdpbnxlstttjreu.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjd2JhZ2RwYm54bHN0dHRqcmV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI5OTk3MjksImV4cCI6MjA2ODU3NTcyOX0.S0L53GCGRzuXybXWeLPqyub5F7PvDtBP5Hog-R9rOew"; // 실제 키 그대로
+
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    async function saveComment(rating, comment, mealDate) {
+      const { data, error } = await supabase
+        .from('meal_comments')
+        .insert([{ rating, comment, meal_date: mealDate, timestamp: Date.now() }]);
+
+      if (error) console.error("댓글 저장 오류:", error);
+    }
+
+    async function loadComments() {
+      const mealDate = mealDatePicker.value;
+      const { data, error } = await supabase
+        .from('meal_comments')
+        .select('*')
+        .eq('meal_date', mealDate)
+        .order('timestamp', { ascending: false });
+
+      if (error) console.error("댓글 불러오기 오류:", error);
+      return data || [];
+    }
+
+    window.onload = initializeApp;
+  </script>
+</body>
+</html>
